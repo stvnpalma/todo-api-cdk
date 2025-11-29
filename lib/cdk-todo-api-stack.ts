@@ -1,26 +1,57 @@
 import * as cdk from "aws-cdk-lib";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
-import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { Construct } from "constructs";
+import * as path from "path";
 
 export class CdkTodoApiStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // Create Lambda function
-    const todosLambda = new lambda.Function(this, "TodosLambda", {
-      runtime: lambda.Runtime.NODEJS_18_X,
-      handler: "todos.handler",
-      code: lambda.Code.fromAsset("lambda"),
+    // ----------------------
+    // DynamoDB Table
+    // ----------------------
+    const table = new dynamodb.Table(this, "TodosTable", {
+      partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
     });
 
-    // Create API Gateway REST API
+    // ----------------------
+    // Lambda Function
+    // ----------------------
+    const todosLambda = new NodejsFunction(this, "TodosLambda", {
+      entry: path.join(__dirname, "../lambda/todos.ts"),
+      handler: "handler",
+      runtime: cdk.aws_lambda.Runtime.NODEJS_18_X,
+      environment: {
+        TABLE_NAME: table.tableName,
+      },
+    });
+
+    // Grant Lambda read/write permissions to the table
+    table.grantReadWriteData(todosLambda);
+
+    // ----------------------
+    // API Gateway
+    // ----------------------
     const api = new apigateway.RestApi(this, "TodosApi", {
       restApiName: "Todo Service",
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+      },
     });
 
-    // Add resource and GET method
+    // /todos
     const todos = api.root.addResource("todos");
     todos.addMethod("GET", new apigateway.LambdaIntegration(todosLambda));
+    todos.addMethod("POST", new apigateway.LambdaIntegration(todosLambda));
+
+    // /todos/{id}
+    const todo = todos.addResource("{id}");
+    todo.addMethod("GET", new apigateway.LambdaIntegration(todosLambda));
+    todo.addMethod("PUT", new apigateway.LambdaIntegration(todosLambda));
+    todo.addMethod("DELETE", new apigateway.LambdaIntegration(todosLambda));
   }
 }
